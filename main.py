@@ -8,230 +8,224 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    BotCommand,
-)
+from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 PORT = int(os.getenv("PORT", 8080))
-OFFER_LINK = "https://disk.yandex.ru/i/ваша_оферта"  # Замените на реальную ссылку
+
+# Для Render бесплатного тарифа
+OFFER_LINK = "https://disk.yandex.ru/i/ваша_оферта"
 PAYMENT_LINK = "https://sberbank.com/sms/pbpn?requisiteNumber=79124591439"
 
-# --- ИНИЦИАЛИЗАЦИЯ БОТА ---
+# --- ИНИЦИАЛИЗАЦИЯ ---
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+logger = logging.getLogger(__name__)
 
 # --- МАШИНА СОСТОЯНИЙ ---
 class Registration(StatesGroup):
-    waiting_for_name = State()
-    waiting_for_contact = State()
-    confirm_data = State()
-    waiting_for_payment_proof = State()
+    name = State()
+    phone = State()
+    confirm = State()
+    payment = State()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-def get_start_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🌊 Записаться на тур")]],
-        resize_keyboard=True,
-        one_time_keyboard=True,
+# --- КЛАВИАТУРЫ ---
+def main_kb():
+    return types.ReplyKeyboardMarkup(
+        keyboard=[[types.KeyboardButton(text="🌊 Записаться на тур")]],
+        resize_keyboard=True
     )
 
-def get_progress(step):
-    steps = ["⬜", "⬜", "⬜"]
-    for i in range(min(step, 3)):
-        steps[i] = "✅"
-    return "".join(steps)
+def cancel_kb():
+    return types.ReplyKeyboardMarkup(
+        keyboard=[[types.KeyboardButton(text="❌ Отмена")]],
+        resize_keyboard=True
+    )
 
-# --- ТЕКСТЫ ДЛЯ ТУРА ---
-TOUR_INFO = """
-🌊 *ТУР НА БАЙКАЛ*
-📅 *Даты:* 25 февраля - 3 марта
+# --- ТЕКСТЫ ---
+TOUR_INFO = """🌊 *ТУР НА БАЙКАЛ 25.02-03.03*
 
-💰 *СТОИМОСТЬ И УСЛОВИЯ ТУРА*
-*Стоимость маршрута:* 79 000 ₽
+💰 *Стоимость:* 79 000 ₽
+💵 *Депозит:* 20 000 ₽
 
-✅ *В СТОИМОСТЬ ВКЛЮЧЕНО:*
-✔️ Проживание по маршруту
-✔️ Питание: завтрак, ужин — включены
-✔️ Экскурсионное сопровождение
-✔️ Все активности, указанные в программе
-✔️ Профессиональная фото- и видеосъёмка на острове Ольхон с квадрокоптера (дрон)
+✅ *Включено:*
+• Проживание
+• Завтраки и ужины
+• Экскурсии и активности
+• Фото/видео с дрона
 
-❌ *ОПЛАЧИВАЕТСЯ ДОПОЛНИТЕЛЬНО:*
-— ✈️ Перелёт (за счёт туриста)
-— Сувениры
-— Обеды, музей, фермы, коньки
-— Личные расходы и индивидуальные «хотелки»
-"""
+❌ *Дополнительно:*
+• Перелёт
+• Обеды, музеи
+• Личные расходы"""
 
-PAYMENT_INFO = f"""
-💳 *ОПЛАТА ДЕПОЗИТА*
-
-Для бронирования места необходимо внести депозит *20 000 ₽*
-
-📲 *Быстрая оплата:*
-[Перейти к оплате]({PAYMENT_LINK})
-
-📌 *Альтернативные реквизиты:*
-`+79124591439` (Сбербанк / Т-Банк)
-👤 Получатель: Екатерина Б.
-
-📎 *После оплаты пришлите скриншот чека сюда.*
-"""
-
-# --- ХЭНДЛЕРЫ БОТА ---
+# --- ХЕНДЛЕРЫ ---
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    welcome_text = (
-        "🌊 *Добро пожаловать на запись в тур на Байкал!*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{TOUR_INFO}\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Для записи на тур заполните короткую анкету.\n\n"
-        "Нажмите кнопку ниже, чтобы начать"
+async def start_cmd(message: types.Message):
+    await message.answer(
+        f"Привет! {TOUR_INFO}\n\n"
+        "Нажмите кнопку ниже для записи:",
+        parse_mode="Markdown",
+        reply_markup=main_kb()
     )
-    await message.answer(welcome_text, parse_mode="Markdown", reply_markup=get_start_kb())
 
 @dp.message(F.text == "🌊 Записаться на тур")
-async def start_form(message: types.Message, state: FSMContext):
+async def start_registration(message: types.Message, state: FSMContext):
     await message.answer(
-        f"{get_progress(0)}\n**Шаг 1:** Введите ваше **ФИО** полностью:",
-        reply_markup=types.ReplyKeyboardRemove(),
+        "📝 *Шаг 1/3*\nВведите ваше ФИО полностью:",
         parse_mode="Markdown",
+        reply_markup=cancel_kb()
     )
-    await state.set_state(Registration.waiting_for_name)
+    await state.set_state(Registration.name)
 
-@dp.message(Registration.waiting_for_name, F.text)
-async def process_name(message: types.Message, state: FSMContext):
+@dp.message(F.text == "❌ Отмена")
+async def cancel_all(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Регистрация отменена", reply_markup=main_kb())
+
+@dp.message(Registration.name, F.text)
+async def get_name(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_all(message, state)
+        return
+    
     await state.update_data(name=message.text)
     await message.answer(
-        f"{get_progress(1)}\n**Шаг 2:** Напишите ваш **номер телефона**:",
+        "📱 *Шаг 2/3*\nВведите номер телефона (+7...):",
         parse_mode="Markdown",
+        reply_markup=cancel_kb()
     )
-    await state.set_state(Registration.waiting_for_contact)
+    await state.set_state(Registration.phone)
 
-@dp.message(Registration.waiting_for_contact, F.text)
-async def process_contact(message: types.Message, state: FSMContext):
-    await state.update_data(contact=message.text)
+@dp.message(Registration.phone, F.text)
+async def get_phone(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_all(message, state)
+        return
+    
+    await state.update_data(phone=message.text)
     data = await state.get_data()
-
-    summary = (
-        f"{get_progress(2)}\n*ПРОВЕРЬТЕ ВАШИ ДАННЫЕ:*\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"👤 *ФИО:* {data.get('name')}\n"
-        f"📞 *Телефон:* {data.get('contact')}\n"
-        f"🎯 *Тур:* Байкал (25.02-03.03)\n"
-        f"💰 *Стоимость:* 79 000 ₽\n"
-        f"💵 *Депозит:* 20 000 ₽\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "Если всё верно — подтвердите данные."
+    
+    text = (
+        "✅ *Шаг 3/3*\n"
+        "Проверьте данные:\n"
+        f"👤 *ФИО:* {data['name']}\n"
+        f"📞 *Телефон:* {data['phone']}\n"
+        f"💵 *Депозит:* 20 000 ₽\n\n"
+        "Всё верно?"
     )
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📜 Читать оферту", url=OFFER_LINK)],
-            [InlineKeyboardButton(text="✅ Все верно, продолжить", callback_data="confirm_ok")],
-            [InlineKeyboardButton(text="❌ Заполнить заново", callback_data="restart")],
-        ]
-    )
-    await message.answer(summary, reply_markup=kb, parse_mode="Markdown")
-    await state.set_state(Registration.confirm_data)
+    
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="✅ Да, продолжить", callback_data="confirm")],
+        [types.InlineKeyboardButton(text="✏️ Исправить", callback_data="restart")],
+        [types.InlineKeyboardButton(text="📄 Оферта", url=OFFER_LINK)]
+    ])
+    
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+    await state.set_state(Registration.confirm)
 
 @dp.callback_query(F.data == "restart")
-async def restart_form(callback: types.CallbackQuery, state: FSMContext):
+async def restart(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    await start_form(callback.message, state)
+    await start_registration(callback.message, state)
 
-@dp.callback_query(F.data == "confirm_ok", Registration.confirm_data)
-async def process_confirm(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "confirm", Registration.confirm)
+async def confirm_data(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    await callback.message.edit_text(
-        f"✅ *ДАННЫЕ ПРИНЯТЫ*\n\n{PAYMENT_INFO}",
-        parse_mode="Markdown",
-        disable_web_page_preview=False
-    )
-    await state.set_state(Registration.waiting_for_payment_proof)
-
-@dp.message(Registration.waiting_for_payment_proof, F.photo | F.document)
-async def process_payment_proof(message: types.Message, state: FSMContext):
-    user_data = await state.get_data()
-    current_time = datetime.now().strftime("%d.%m.%Y %H:%M")
     
-    admin_report = (
-        "🔥 *НОВАЯ ЗАЯВКА НА ТУР НА БАЙКАЛ!*\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"👤 *ФИО:* {user_data.get('name')}\n"
-        f"📞 *Телефон:* {user_data.get('contact')}\n"
-        f"🎯 *Тур:* Байкал (25.02-03.03)\n"
-        f"💰 *Сумма:* 79 000 ₽\n"
-        f"💵 *Депозит:* 20 000 ₽\n"
-        f"🆔 *ID:* `{message.from_user.id}`\n"
-        f"📅 *Время заявки:* {current_time}\n"
-        "━━━━━━━━━━━━━━━━━━"
+    payment_text = (
+        "💳 *ОПЛАТА ДЕПОЗИТА*\n\n"
+        "Для бронирования оплатите 20 000 ₽\n\n"
+        f"📲 *Ссылка для оплаты:*\n{PAYMENT_LINK}\n\n"
+        "Или по номеру: `+79124591439`\n"
+        "Получатель: Екатерина Б.\n\n"
+        "*После оплаты отправьте скриншот чека*"
     )
+    
+    await callback.message.edit_text(payment_text, parse_mode="Markdown")
+    await state.set_state(Registration.payment)
 
+@dp.message(Registration.payment)
+async def get_payment(message: types.Message, state: FSMContext):
+    # Проверяем, есть ли фото или документ
+    if not (message.photo or message.document):
+        await message.answer("Пожалуйста, отправьте скриншот чека (фото или документ)")
+        return
+    
+    # Получаем данные
+    data = await state.get_data()
+    user = message.from_user
+    
+    # Формируем сообщение админу
+    admin_msg = (
+        "🔥 *НОВАЯ ЗАЯВКА НА БАЙКАЛ!*\n\n"
+        f"👤 *ФИО:* {data['name']}\n"
+        f"📞 *Телефон:* {data['phone']}\n"
+        f"🆔 *ID:* {user.id}\n"
+        f"👤 *Username:* @{user.username if user.username else 'нет'}\n"
+        f"📅 *Время:* {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        f"💵 *Сумма:* 79 000 ₽\n"
+        f"💰 *Депозит:* 20 000 ₽"
+    )
+    
+    # Отправляем админу
     if ADMIN_ID:
         try:
-            await bot.send_message(ADMIN_ID, admin_report, parse_mode="Markdown")
-            await message.copy_to(ADMIN_ID)
+            await bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown")
+            if message.photo:
+                await bot.send_photo(ADMIN_ID, message.photo[-1].file_id)
+            elif message.document:
+                await bot.send_document(ADMIN_ID, message.document.file_id)
         except Exception as e:
-            logging.error(f"Ошибка отправки админу: {e}")
-
+            logger.error(f"Ошибка отправки админу: {e}")
+    
+    # Подтверждение пользователю
     await message.answer(
-        "✨ *БРОНЬ ПРИНЯТА!*\n\n"
-        "Спасибо за вашу заявку! Мы свяжемся с вами в ближайшее время "
-        "для уточнения деталей.\n\n"
-        "📞 По вопросам: @ваш_контакт",  # Замените на реальный контакт
-        reply_markup=get_start_kb(),
-        parse_mode="Markdown",
+        "✅ *ЗАЯВКА ПРИНЯТА!*\n\n"
+        "Спасибо за бронирование! Мы свяжемся с вами в ближайшее время для уточнения деталей.\n\n"
+        "По вопросам: @ваш_менеджер",
+        reply_markup=main_kb()
     )
+    
     await state.clear()
 
 # --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
-async def handle_health_check(request):
-    """Эндпоинт для проверки работоспособности"""
-    return web.Response(text="Bot is alive and ready for Baikal tour!")
+async def health_check(request):
+    return web.Response(text="Bot is alive")
 
-async def start_web_server():
-    """Запускает aiohttp сервер для keep-alive"""
+async def start_web():
+    """Запуск веб-сервера для keep-alive"""
     app = web.Application()
-    app.router.add_get("/", handle_health_check)
-    app.router.add_get("/health", handle_health_check)
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
     
     runner = web.AppRunner(app)
     await runner.setup()
-    
-    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
-    logging.info(f"Web server started on port {PORT}")
+    logger.info(f"Web server started on port {PORT}")
+    return runner
 
 # --- ЗАПУСК ---
 async def main():
-    # Настройка бота
+    logger.info("Starting bot...")
+    
+    # Запускаем веб-сервер и бота параллельно
+    web_runner = await start_web()
+    
+    # Настраиваем бота
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Начать запись на тур")
-    ])
-
-    # Запуск бота и веб-сервера параллельно
-    await asyncio.gather(
-        dp.start_polling(bot),
-        start_web_server(),
-    )
+    
+    # Запускаем поллинг
+    await dp.start_polling(bot)
+    
+    # Очистка при остановке
+    await web_runner.cleanup()
 
 if __name__ == "__main__":
-    try:
-        logging.info("Starting Baikal Tour Bot...")
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot stopped!")
+    asyncio.run(main())
