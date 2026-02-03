@@ -271,8 +271,7 @@ async def get_payment(message: types.Message, state: FSMContext):
     await message.answer(
         "✅ *ЗАЯВКА ПРИНЯТА!*\n\n"
         "Спасибо за бронирование! Мы свяжемся с вами в ближайшее время для уточнения деталей.\n\n"
-        "По всем вопросам обращайтесь:\n"
-        "@ваш_менеджер",
+        ,
         reply_markup=main_kb()
     )
     
